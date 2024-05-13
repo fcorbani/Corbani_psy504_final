@@ -14,13 +14,6 @@
     "text": "Hi! I’m Faustine, a first year Psychology graduate student at Princeton University. My primary advisor is Dr. Diana Tamir and my secondary advisor is Dr. Erik Nook.\nI’m currently studying how the dynamics of spontaneous thought facilitate emotion regulation. Prior to starting my PhD, I received a B.A in Psychology and a B.A in Philosophy from Brown University in 2020."
   },
   {
-    "objectID": "posts/welcome/index.html",
-    "href": "posts/welcome/index.html",
-    "title": "Welcome To My Blog",
-    "section": "",
-    "text": "Test. This is the first post in a Quarto blog. Welcome!\n\nSince this post doesn’t specify an explicit image, the first image in the post will be used in the listing page of posts."
-  },
-  {
     "objectID": "posts/post-with-code/index.html",
     "href": "posts/post-with-code/index.html",
     "title": "Using NLP to Identify Topic Shifts in Spontaneous Thought",
