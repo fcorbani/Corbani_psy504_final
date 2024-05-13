@@ -1,0 +1,17 @@
+project:
+  type: website
+
+website:
+  title: "Faustine Corbani PSY504 Final"
+  navbar:
+    right:
+      - about.qmd
+      - icon: github
+        href: https://github.com/fcorbani
+format:
+  html:
+    theme: litera
+    css: styles.css
+
+editor: visual
+

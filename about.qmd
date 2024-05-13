@@ -1,0 +1,18 @@
+---
+title: "Faustine Corbani"
+image: profile.PNG
+about:
+  template: trestles
+  links:
+    - icon: github
+      text: Github
+      href: https://github.com/fcorbani
+---
+
+::: {#hero-heading}
+## About me
+
+Hi! I'm Faustine, a first year Psychology graduate student at Princeton University. My primary advisor is Dr. Diana Tamir and my secondary advisor is Dr. Erik Nook.
+
+I'm currently studying how the dynamics of spontaneous thought facilitate emotion regulation. Prior to starting my PhD, I received a B.A in Psychology and a B.A in Philosophy from Brown University in 2020. 
+:::

@@ -1,0 +1,446 @@
+---
+title: "Using NLP to Identify Topic Shifts in Spontaneous Thought"
+author: "Faustine Corbani"
+date: "2024-05-11"
+categories: [NLP, clustering, analysis]
+image: "thinking.jpeg"
+engine: knitr
+execute:
+  warning: false
+---
+
+Our minds rarely sit still. Whether we're walking, eating, working, or socializing, our minds are continuously roving through a mental landscape of thoughts, memories, plans, fantasies, and reflections. Studies suggest that we spend between 30-50% of our waking hours engaging in these spontaneous thoughts.
+
+Given the ubiquity of spontaneous thought, it's essential that we develop tools to quantify and analyze people's streams of thoughts. In this blog post, I will detail one such tool: how we can leverage natural language processing (NLP) and topic modeling to identify topic jumps within a transcribed stream of thoughts. Prior research has observed a "clump-and-jump" structure in thought, where thoughts cluster around a specific theme before transitioning, at times abruptly, to a new, unrelated topic. Prior work has relied on human annotation to identify instances when thoughts shift from one topic to the next. However, this method is unfeasible in large datasets. This blog post will detail how advancements in NLP and topic modeling can automate the detection of these transitions. Specifically, in this tutorial, I will use Python to apply clustering algorithms to segment thoughts extracted from verbal data to visualize and analyze the dynamics of spontaneous thought more efficiently.
+
+In this tutorial, I will be using a dataset of 746 subjects who were were instructed to narrate their stream of thought in real time, saying whatever is going through your mind from moment to moment for 10 minutes. The result is a dataframe where each row corresponds to a subject and there is a column called 'sentences' which contains a list of strings, where each string corresponds to a thought.
+
+## Set-Up
+
+First, you need to load the following packages & your data.
+
+```{python, eval=FALSE}
+import pandas as pd
+from sentence_transformers import SentenceTransformer
+import numpy as np
+from scipy.cluster.hierarchy import linkage, fcluster
+import ast
+import umap
+import matplotlib.pyplot as plt
+import seaborn as sns
+from tabulate import tabulate
+from sklearn.cluster import KMeans
+import os
+
+```
+
+```{python}
+#| echo: false
+import pandas as pd
+from sentence_transformers import SentenceTransformer
+import numpy as np
+from scipy.cluster.hierarchy import linkage, fcluster
+import ast
+from tabulate import tabulate
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.cluster import KMeans
+
+```
+
+```{python}
+path_to_data = "/Users/faustinecorbani/Desktop/emotion_thought/data/semi-clean/subject_level_dynamic_measures.csv"
+data = pd.read_csv(path_to_data)
+
+```
+
+```{python}
+#| echo: false
+
+# Get the first 30 unique subject_ids
+unique_subject_ids = data['subject_id'].unique()[:30]
+
+# Select rows where subject_id is in the list of 30 unique subject_ids
+data = data[data['subject_id'].isin(unique_subject_ids)]
+
+data['sentences'] = data['sentences'].apply(lambda x: ast.literal_eval(x) if isinstance(x, str) else [])
+
+
+
+```
+
+```{python}
+
+print(tabulate(data.head(), headers='keys', tablefmt='psql'))
+
+
+```
+
+## 
+
+## **Understanding Sentence Transformers and Embeddings**
+
+An important question in NLP is how to represent textual data in a format that computers can understand and work with easily. One solution is to convert language to numerical data through sentence embeddings, which encode pieces of text as high-dimensional vectors. These vectors capture meaningful semantic information, where sentences that are more similar to one another share more similar representations. This property is crucial for clustering and identifying relationships in large text corpora.
+
+One popular approach to create sentence embeddings is to use pre-trained models that are able to take text as an input and output a vector corresponding to a sentence embedding. In this tutorial, I will use the pre-trained ‘all-mpnet-base-v2’ model from Hugging Face’s sentence-transformers library that maps sentences to a 768 dimensional dense vector space. I chose this model because it provides the best quality sentence embeddings per the platform's model comparison and evaluation criteria (<https://www.sbert.net/docs/pretrained_models.html>).
+
+The first step is to load our pre-trained sentence transformer model:
+
+```{python}
+model = SentenceTransformer('sentence-transformers/all-mpnet-base-v2')
+
+```
+
+Next, we want to extract our sentence embeddings for each sentence . Let's create a function that does this and run it for every subject:
+
+```{python, eval=FALSE}
+
+def process_subject_data(subject_data):
+    subject_sentences = [sentence for sublist in subject_data['sentences'] for sentence in sublist]
+    if not subject_sentences:
+        return None  # Return None if there are no sentences
+    return model.encode(subject_sentences)  # Extract the embeddings for every sentence 
+
+# Collect embeddings for all subjects
+all_embeddings = []
+subject_ids = []
+
+for name, group in data.groupby('subject_id'):
+    embeddings = process_subject_data(group)
+    if embeddings is not None:
+        all_embeddings.append(embeddings)
+        subject_ids.extend([name] * len(embeddings))
+        
+```
+
+## **Dimensionality Reduction**
+
+### What is the curse of dimensionality?
+
+The "curse of dimensionality" is a term often used within the machine learning literature to describe a challenge that emerges when working with data in high-dimensional spaces. As you add more dimensions a numerical representation, the space within which data points exist increases exponentially. A helpful analogy is to think of going from a line, to a square, to a cube: as each new dimension is added, you need increasingly more points to cover the space, resulting in more empty area. This makes clustering and classification tasks challenging since meaningful similarities in representation may become obfuscated. In addition, more dimensions require more computing power and time to process the data, and there is a risk of overfitting, where models might start to "learn" the noise in the data instead of the actual patterns, which can mislead predictions or classifications.
+
+To overcome these issues, we can use dimensionality reduction to simplify the complexity of high-dimensional data while preserving its essential features. One such method is UMAP: Uniform Manifold Approximation and Projection. UMAP maps high-dimensional sentence embeddings to an n-dimensional space (here we will use 2 dimensions for simplicity). This helps overcome the curse of dimensionality and enables us to visually discern patterns and clusters in the data, which will be especially helpful in our case since we are curious about how thoughts might cluster around themes and make abrupt jumps to different topics.
+
+So, we reduce the dimension of our data by running the following code:
+
+```{python, eval=FALSE}
+
+# Concatenate all embeddings into a single array
+all_embeddings = np.vstack(all_embeddings)
+
+# Apply UMAP to the entire dataset of embeddings
+umap_reducer = umap.UMAP()
+all_umap_embeddings = umap_reducer.fit_transform(all_embeddings)
+
+umap_df = pd.DataFrame({
+        'subject_id': subject_ids,
+        'UMAP1': all_umap_embeddings[:, 0],
+        'UMAP2': all_umap_embeddings[:, 1]
+    })
+```
+
+We can then plot some of our data to see how whether we can visually see various any clusters of thoughts emerge.
+
+```{python}
+#| echo: false
+
+data = pd.read_csv("/Users/faustinecorbani/Desktop/emotion_thought/data/clean/all_measures/thought_level_dynamics_final.csv")
+cutoff_results = pd.read_csv("/Users/faustinecorbani/umap_hierarchical_cutoff_7.csv")
+cutoff_results['thought_number'] = cutoff_results.groupby('subject_id').cumcount() + 1
+
+#Merge the cluster information to thought level data
+umap_df = cutoff_results.merge(
+    data,
+    on=['subject_id', 'thought_number'],
+    how='left'
+)
+
+```
+
+```{python}
+
+subset = umap_df[30000:50000]
+
+plt.figure(figsize=(10,8))
+plt.scatter(
+    subset['UMAP1'],
+    subset['UMAP2'],
+    s = 0.5,
+    alpha = 0.5, 
+    color = "red")
+    
+plt.show()
+
+```
+
+Great! We can see how certain thoughts seem to be grouping together in space. We can bring a little more clarity to this visualization by mapping each subject to a unique color.
+
+```{python}
+
+# Generate a unique color for each unique subject_id
+palette = sns.color_palette("hsv", n_colors=len(subset['subject_id'].unique()))  
+color_map = {subject: color for subject, color in zip(subset['subject_id'].unique(), palette)}
+
+# Map each subject_id to its color in the subset
+subset['color'] = subset['subject_id'].map(color_map)
+
+plt.figure(figsize=(10, 8))
+plt.scatter(
+    subset['UMAP1'],
+    subset['UMAP2'],
+    s=0.5,
+    alpha=0.5,
+    c=subset['color']  # Use the mapped colors
+)
+plt.title('UMAP Projection of a subset of thoughts')
+plt.show()
+```
+
+Coloring each thought based on which person uttered it helps reveal this "clump-and-jump" thought structure that we expected to see.
+
+Look at the pink subject for example. We can see how their thoughts have clustered in a few different areas.
+
+Different subjects also seem to cover different numbers of topics and stay on topics for different amounts of time. For instance, the subject in light blue seems to have spent a lot of time thinking about a topic around coordinates (25,8).
+
+It's also fun to see the overlap in what subjects thought about!
+
+## Clustering our data
+
+With each thought now represented as a 2D embedding, we can categorize these thoughts into groups of similar observations using a clustering algorithm. K-means clustering is one of the most commonly used methods for this purpose thanks to its efficiency in grouping data. The primary aim of K-means clustering is to organize the data into clusters where members of a same cluster are as similar as possible, while members of different clusters are as dissimilar as possible.
+
+*How exactly does the algorithm work?*
+
+One key concept for understand k-means clustering is the idea of a a "centroid" , which is the average position of all the data points within a cluster. The centroid acts as the cluster's center but it may not necessarily be a point orginally from that dataset.
+
+K-means begins by determining a fixed number of clusters, represented by the variable **`k`**. For instance, setting **`k`** to 2 will split the dataset into two clusters, and setting it to 4 will create four clusters. Once a number of clusters is selected, the procedure works by:
+
+1.  First, the algorithm selects random data points as initial centroids for the assigned number of clusters. If **`k`** is set to 3, it randomly picks 3 initial centroids.
+2.  Next, K-means assigns each data point to the nearest centroid, effectively placing it in the specific cluster where the centroid acts as a nucleus.
+3.  After assignment, K-means recalculates each cluster's centroid by averaging all the points assigned to that cluster, thereby reducing the total variance within the cluster. As new centroids are determined, data points are reassigned to the closest centroid.
+
+This process of recalculating centroids and reassigning data points repeats until one of three conditions is met: the total distance between points and their respective centroids no longer decreases significantly, a preset number of iterations is reached, or the centroids stabilize and cease to change.
+
+*How can we select a number of clusters?*
+
+It might seem difficult and subjective to chose a number of expected clusters/topics within our dataset. Instead of making that decision like a shot in the dark, we can use a popular technique for selecting a number of clusters: the Elbow Method. The method involves running the clustering algorithm several times over a range of values for k and plotting the results to find the point at which the improvement in the clustering results diminishes as k increases. This point is often referred to as the "elbow," where adding more clusters does not provide much better modeling of the data. We can define improvement in the clustering results by looking at the total within-cluster sum of square (WSS). It measures the compactness of the clusters and is defined as the sum of the squared distances between each observation and its closest centroid. Essentially, it measures how close each point in a cluster is to the centroid.
+
+So, let's apply k-means clustering to our dataset with different numbers of clusters. Given that we have 70,000+ thoughts, a k ranging from 100-1000 seems like it could work, but we can always readjust our numbers based on the plot.
+
+```{python}
+#| echo: false
+all_umap_embeddings = umap_df[['UMAP1', 'UMAP2']].to_numpy()
+```
+
+```{python}
+def cluster_and_save(num_clusters):
+    kmeans = KMeans(n_clusters=num_clusters)
+    clusters = kmeans.fit_predict(all_umap_embeddings)
+    inertia = kmeans.inertia_
+
+    # Create the DataFrame with cluster assignments
+    results_df = pd.DataFrame({
+        'subject_id': umap_df['subject_id'],
+        'cluster': clusters,
+        'UMAP1': umap_df['UMAP1'],
+        'UMAP2': umap_df['UMAP2']
+    })
+    
+    return inertia, results_df
+
+# List of number of clusters to try
+num_clusters_list = [100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600, 650, 700, 750, 800, 850, 900, 950, 1000]
+inertias = []
+
+for num_clusters in num_clusters_list:
+    inertia, results_df = cluster_and_save(num_clusters)
+    inertias.append(inertia)
+    
+
+plt.figure(figsize=(10, 6))
+plt.plot(num_clusters_list, inertias, marker='o')
+plt.title('Elbow Plot for K-Means Clustering')
+plt.xlabel('Number of Clusters')
+plt.ylabel('Inertia')
+plt.grid(True)
+plt.xticks(num_clusters_list)
+
+```
+
+Our elbow plot does not reveal a specific elbow where inertia stops declining. However, it does suggest a range of values after which the decline in inertia is much smaller. According to this metric, the number of clusters we should use likely ranges between 350 and 600 or so.
+
+We can turn to a couple of other metrics to help us make a decision regarding what value of k we should use when clustering. For example, according to prior work that used human annotators to identify thought jumps, we can expect subjects to switch topics 20-30 times within the 10 minutes of speaking, and each topic can be expect to contain around 4-6 thoughts.
+
+Further, given the "clump-and-jump" nature of thought, we should expect thought to be more similar within a cluster, and then lowly similar when there's a jump to a new topic.
+
+Thus, we can compare these different values (i.e. average number of clusters *per subject*, average number of thoughts per cluster, difference in semantic similarity within and between clusters) to see for which value of k these metrics most closely resemble what we would expect.
+
+The following code calculates those measures for each cluster value, and we can then plot them to identify an optimal value of k.
+
+```{python}
+
+summary_data = {}
+
+for num_clusters in num_clusters_list:
+    inertia, results_df = cluster_and_save(num_clusters)
+
+    results_df['thought_number'] = results_df.groupby('subject_id').cumcount() + 1
+    merged_data = results_df.merge(data, on=['subject_id', 'thought_number'], how='left')
+    
+    merged_data['jump'] = merged_data.groupby('subject_id')['cluster'].diff().ne(0)
+    merged_data['jump'] = merged_data['jump'].astype('boolean')
+    merged_data.loc[merged_data.groupby('subject_id').head(1).index, 'jump'] = False
+    
+    subjects_with_jumps = merged_data.groupby('subject_id')['jump'].sum()
+    subjects_with_jumps = subjects_with_jumps[subjects_with_jumps > 0].index
+    filtered_data = merged_data[merged_data['subject_id'].isin(subjects_with_jumps)]
+    
+    total_clusters = filtered_data.groupby('subject_id')['cluster'].nunique()
+    total_jumps = filtered_data.groupby('subject_id')['jump'].sum()
+    mean_sem_sim_jump = filtered_data[filtered_data['jump']]['Previous_Thought_Similarity'].groupby(filtered_data['subject_id']).mean().fillna(0)
+    mean_sem_sim_non_jump = filtered_data[~filtered_data['jump']]['Previous_Thought_Similarity'].groupby(filtered_data['subject_id']).mean().fillna(0)
+    
+    diff_mean_sem_sim = mean_sem_sim_non_jump - mean_sem_sim_jump 
+    thoughts_per_cluster = filtered_data.groupby(['subject_id', 'cluster']).size().reset_index(name='thoughts')
+    mean_thoughts_per_cluster = thoughts_per_cluster.groupby('subject_id')['thoughts'].mean().fillna(0)
+    
+    summary_data[num_clusters] = pd.DataFrame({
+        'subject_id': total_clusters.index,
+        'total_clusters': total_clusters.values,
+        'total_jumps': total_jumps.values,
+        'mean_sem_sim_jump': mean_sem_sim_jump.values,
+        'mean_sem_sim_non_jump': mean_sem_sim_non_jump.values,
+        'mean_thoughts_per_cluster': mean_thoughts_per_cluster.values,
+        'diff_mean_sem_sim': diff_mean_sem_sim.values
+    })
+
+# Combine all the summary data
+all_summary = pd.concat(summary_data.values(), keys=summary_data.keys(), names=['cutoff', 'row']).reset_index(level=0)
+
+mean_metrics = all_summary.groupby('cutoff').agg({
+    'total_clusters': 'mean',
+    'total_jumps': 'mean',
+    'mean_sem_sim_jump': 'mean',
+    'mean_sem_sim_non_jump': 'mean',
+    'mean_thoughts_per_cluster': 'mean',
+    'diff_mean_sem_sim': 'mean'
+}).reset_index()
+
+
+```
+
+```{python}
+
+plt.figure(figsize=(10, 6))
+plt.plot(mean_metrics['cutoff'], mean_metrics['total_clusters'], marker='o')
+plt.axvline(x=450, color='red', linestyle='--', linewidth=2)
+plt.title('Mean Total Clusters by Cutoff')
+plt.xlabel('Cutoff')
+plt.ylabel('Mean Total Clusters')
+plt.grid(True)
+plt.show()
+
+```
+
+```{python}
+
+plt.figure(figsize=(10, 6))
+plt.plot(mean_metrics['cutoff'], mean_metrics['mean_thoughts_per_cluster'], marker='o')
+plt.axvline(x=450, color='red', linestyle='--', linewidth=2)
+plt.title('Mean Thoughts per Cluster by Cutoff')
+plt.xlabel('Cutoff')
+plt.ylabel('Mean Thoughts per Cluster')
+plt.grid(True)
+plt.show()
+
+
+
+
+```
+
+```{python}
+
+# Assuming `mean_metrics` is your DataFrame with 'cutoff' and 'diff_mean_sem_sim' columns
+
+plt.figure(figsize=(10, 6))
+plt.plot(mean_metrics['cutoff'], mean_metrics['diff_mean_sem_sim'], marker='o', label='Mean Semantic Similarity Difference')
+
+# Add a vertical red line at 450 clusters
+plt.axvline(x=450, color='red', linestyle='--', linewidth=2)
+
+plt.title('Difference in Mean Semantic Similarity at Jumps vs Non-Jumps by Cutoff')
+plt.xlabel('Cutoff')
+plt.ylabel('Difference in Mean Semantic Similarity')
+plt.grid(True)
+
+# Add a legend to explain the red line
+plt.legend()
+
+plt.show()
+```
+
+Visual inspection of the graphs reveals that using 450 clusters results in an appropriate number of average cluster per subject (i.e. 23), of thoughts per topic (5) and a high difference in semantic similarity within compared to across topic jumps.
+
+So, using these metrics, we can make an informed decision to use 450 clusters.
+
+We can now re-run our clustering using only k = 450, and use the results to assign each thought to a cluster.
+
+```{python}
+
+inertia, results_df = cluster_and_save(450)
+
+```
+
+```{python}
+results_df['thought_number'] = results_df.groupby('subject_id').cumcount() + 1
+
+#Merge the cluster information to thought level data
+thoughts_with_clusters = results_df.merge(
+    data,
+    on=['subject_id', 'thought_number'],
+    how='left'
+)
+
+
+print(tabulate(thoughts_with_clusters[['cluster','thought']][500:530], headers='keys', tablefmt='psql'))
+
+
+
+```
+
+We can see when subsequent thoughts belong to the same versus a different cluster; if consecutive thoughts belong to different clusters, that indicates a topic switch, we can identify by create a column called "jump" and assigning that row the value of TRUE.
+
+```{python}
+
+thoughts_with_clusters['jump'] = thoughts_with_clusters.groupby('subject_id')['cluster'].diff().ne(0)
+ 
+print(tabulate(thoughts_with_clusters[['cluster','jump', 'thought']][500:530], headers='keys', tablefmt='psql'))
+
+
+
+```
+
+And we can also visualise how our clustering performed! We can plot our thought-space again, but instead of coloring data points by subject, we can color by topic to see whether thought that are closer in space belong to the same topics.
+
+```{python}
+subset = thoughts_with_clusters[30000:50000]
+# Generate a unique color for each unique subject_id
+palette = sns.color_palette("hsv", n_colors=len(subset['cluster'].unique()))  
+color_map = {subject: color for subject, color in zip(subset['cluster'].unique(), palette)}
+
+subset['color'] = subset['cluster'].map(color_map)
+plt.figure(figsize=(10, 8))
+plt.scatter(
+    subset['UMAP1'],
+    subset['UMAP2'],
+    s=0.5,
+    alpha=1,
+    c=subset['color']  # Use the mapped colors
+)
+plt.title('UMAP Projection of a subset of thoughts')
+plt.show()
+
+```
+
+And that seems to be the case!
+
+In all, I hope this tutorial helped show how we can identify topic switches in spontaneous thought data. Thanks for reading!
